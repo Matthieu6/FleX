@@ -8,7 +8,7 @@ FleX is a web application developed as part of an Imperial MSc Group Project. Th
 Flex_WebApp/
 ├── app/                  # Application package
 │   ├── __init__.py       # Flask application initialization
-│   ├── models/           # Database models
+│   ├── models/           # ML models
 │   ├── routes/           # Route definitions and view functions
 │   ├── static/           # Static files (CSS, JS, images)
 │   ├── templates/        # HTML templates
