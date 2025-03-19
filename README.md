@@ -1,5 +1,4 @@
 # Flex Web Application
-
 ## Overview
 FleX is a web application developed as part of an Imperial MSc Group Project. This application provides a flexible platform for managing and visualizing live EMG and IMU data and running multiple ML models to classify exercises aswell as muscle fatigue levels.
 
