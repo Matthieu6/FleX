@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}FleX App{% endblock %} - Flex WebApp</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css">
+    <!-- Add Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Add Plotly.js for interactive plotting -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <a href="{{ url_for('home.home') }}">
+                    <span class="company-name">FleX</span>
+                </a>
+            </div>
+            <ul class="nav-links">
+                <li><a href="{{ url_for('home.home') }}" class="{% if request.endpoint == 'home.home' %}active{% endif %}"><i class="fas fa-home"></i> Home</a></li>
+                <li><a href="{{ url_for('files.files') }}" class="{% if request.endpoint == 'files.files' %}active{% endif %}"><i class="fas fa-file"></i> Files</a></li>
+                <li><a href="{{ url_for('emg.emg') }}" class="{% if request.endpoint == 'emg.emg' %}active{% endif %}"><i class="fas fa-chart-line"></i> EMG</a></li>
+                <li><a href="{{ url_for('imu.imu') }}" class="{% if request.endpoint == 'imu.imu' %}active{% endif %}"><i class="fas fa-compass"></i> IMU</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html> 

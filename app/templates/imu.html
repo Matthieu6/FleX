@@ -1,0 +1,850 @@
+{% extends "base.html" %}
+
+{% block title %}IMU{% endblock %}
+
+{% block content %}
+<h1>IMU Data Collection</h1>
+
+<div class="dashboard-panel">
+    <h2>Device Connection</h2>
+    <div class="status-panel">
+        <p id="connection-status">Status: Disconnected</p>
+        <div class="connection-indicators">
+            <div class="indicator">
+                <span class="indicator-label">IMU:</span>
+                <span id="imu-indicator" class="indicator-status disconnected">Disconnected</span>
+            </div>
+            <div class="indicator" id="device-address-container" style="display: none;">
+                <span class="indicator-label">Device:</span>
+                <span id="device-address" class="indicator-status">Not detected</span>
+            </div>
+        </div>
+    </div>
+    <div class="button-group">
+        <button id="btn-connect" class="btn">Connect to IMU</button>
+        <button id="btn-disconnect" class="btn" disabled>Disconnect</button>
+    </div>
+</div>
+
+<div class="dashboard-panel recording-panel">
+    <h2>Data Recording</h2>
+    <div class="form-group">
+        <label for="file-name">Recording File Name:</label>
+        <input type="text" id="file-name" class="form-control" placeholder="session_name">
+        <span class="helper-text">The file will be saved as [filename]_imu.csv</span>
+    </div>
+    <div class="recording-controls">
+        <div class="button-group">
+            <button id="btn-start-recording" class="btn" disabled>Start Recording</button>
+            <button id="btn-stop-recording" class="btn" disabled>Stop Recording</button>
+        </div>
+        <div class="rep-counter">
+            <button id="btn-mark-rep" class="btn btn-large" disabled>
+                <i class="fas fa-plus"></i> Count Repetition
+            </button>
+            <div class="counter-display">
+                <span id="rep-count">0</span>
+                <span class="counter-label">reps</span>
+            </div>
+        </div>
+    </div>
+    <div class="recording-status" id="recording-status" style="display: none;">
+        <div class="recording-indicator">
+            <span class="dot"></span> Recording
+        </div>
+        <div class="recording-timer">
+            <i class="fas fa-clock"></i> <span id="recording-time">00:00:00</span>
+        </div>
+        <div class="recording-file">
+            <i class="fas fa-file"></i> <span id="recording-filename">No file</span>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-panel">
+    <h2>Live Data</h2>
+    <div class="data-row-container">
+        <div class="live-data-values">
+            <div class="data-card">
+                <h3>Accelerometer</h3>
+                <div id="accel-data">
+                    <div class="data-row">
+                        <span class="data-label">X:</span>
+                        <span id="accel-x" class="data-value">0.00</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Y:</span>
+                        <span id="accel-y" class="data-value">0.00</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Z:</span>
+                        <span id="accel-z" class="data-value">0.00</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="data-card">
+                <h3>Gyroscope</h3>
+                <div id="gyro-data">
+                    <div class="data-row">
+                        <span class="data-label">X:</span>
+                        <span id="gyro-x" class="data-value">0.00</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Y:</span>
+                        <span id="gyro-y" class="data-value">0.00</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Z:</span>
+                        <span id="gyro-z" class="data-value">0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-tabs">
+                <button class="chart-tab active" data-chart="accel">Accelerometer</button>
+                <button class="chart-tab" data-chart="gyro">Gyroscope</button>
+            </div>
+            <div id="accel-chart" class="chart-view" style="width:100%; height:300px;"></div>
+            <div id="gyro-chart" class="chart-view" style="width:100%; height:300px; display:none;"></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script src="{{ url_for('static', filename='js/imu.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // DOM Elements
+    const btnConnect = document.getElementById('btn-connect');
+    const btnDisconnect = document.getElementById('btn-disconnect');
+    const connectionStatus = document.getElementById('connection-status');
+    const imuIndicator = document.getElementById('imu-indicator');
+    const deviceAddressContainer = document.getElementById('device-address-container');
+    const deviceAddress = document.getElementById('device-address');
+    
+    const fileNameInput = document.getElementById('file-name');
+    const btnStartRecording = document.getElementById('btn-start-recording');
+    const btnStopRecording = document.getElementById('btn-stop-recording');
+    const btnMarkRep = document.getElementById('btn-mark-rep');
+    const repCount = document.getElementById('rep-count');
+    const recordingStatus = document.getElementById('recording-status');
+    const recordingTime = document.getElementById('recording-time');
+    const recordingFilename = document.getElementById('recording-filename');
+    
+    const accelX = document.getElementById('accel-x');
+    const accelY = document.getElementById('accel-y');
+    const accelZ = document.getElementById('accel-z');
+    const gyroX = document.getElementById('gyro-x');
+    const gyroY = document.getElementById('gyro-y');
+    const gyroZ = document.getElementById('gyro-z');
+    
+    // Chart tabs
+    const chartTabs = document.querySelectorAll('.chart-tab');
+    const accelChartEl = document.getElementById('accel-chart');
+    const gyroChartEl = document.getElementById('gyro-chart');
+    
+    // State variables
+    let connected = false;
+    let recording = false;
+    let dataPollingInterval = null;
+    let statusPollingInterval = null;
+    let recordingStartTime = 0;
+    
+    // Chart configuration
+    const createChartData = (title, colors) => {
+        return [
+            {
+                name: title + ' X',
+                y: [],
+                mode: 'lines',
+                line: { color: colors[0] }
+            },
+            {
+                name: title + ' Y',
+                y: [],
+                mode: 'lines',
+                line: { color: colors[1] }
+            },
+            {
+                name: title + ' Z',
+                y: [],
+                mode: 'lines',
+                line: { color: colors[2] }
+            }
+        ];
+    };
+    
+    const createChartLayout = (title) => {
+        return {
+            title: title + ' Live Data',
+            xaxis: { 
+                title: 'Samples',
+                showgrid: true,
+                zeroline: false,
+                range: [0, 100]
+            },
+            yaxis: { 
+                title: 'Value',
+                showgrid: true,
+                zeroline: true
+            },
+            margin: { t: 40, l: 60, r: 40, b: 50 },
+            legend: {
+                orientation: 'h',
+                y: 1.1
+            },
+            autosize: true
+        };
+    };
+    
+    // Initialize the charts
+    const accelChartData = createChartData('Accel', ['#FF6384', '#36A2EB', '#4BC0C0']);
+    const gyroChartData = createChartData('Gyro', ['#FF9F40', '#9966FF', '#FFCD56']);
+    
+    Plotly.newPlot('accel-chart', accelChartData, createChartLayout('Accelerometer'), { responsive: true });
+    Plotly.newPlot('gyro-chart', gyroChartData, createChartLayout('Gyroscope'), { responsive: true });
+    
+    let sampleCount = 0;
+    const maxPoints = 100;
+    
+    // Handle chart tab switching
+    chartTabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            // Remove active class from all tabs
+            chartTabs.forEach(t => t.classList.remove('active'));
+            
+            // Add active class to clicked tab
+            this.classList.add('active');
+            
+            // Show/hide corresponding chart
+            const chartType = this.dataset.chart;
+            if (chartType === 'accel') {
+                accelChartEl.style.display = 'block';
+                gyroChartEl.style.display = 'none';
+            } else {
+                accelChartEl.style.display = 'none';
+                gyroChartEl.style.display = 'block';
+            }
+        });
+    });
+    
+    // Connect to IMU device
+    btnConnect.addEventListener('click', function() {
+        updateStatus('Connecting to IMU device...');
+        btnConnect.disabled = true;
+        
+        fetch('/imu/api/connect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                connected = true;
+                updateStatus(data.message);
+                
+                btnConnect.disabled = true;
+                btnDisconnect.disabled = false;
+                btnStartRecording.disabled = false;
+                
+                imuIndicator.textContent = 'Connected';
+                imuIndicator.className = 'indicator-status connected';
+                
+                // Show device address if available
+                if (data.device_address) {
+                    deviceAddressContainer.style.display = 'flex';
+                    deviceAddress.textContent = data.device_address;
+                }
+                
+                // Start polling for data
+                startDataPolling();
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnConnect.disabled = false;
+                
+                imuIndicator.textContent = 'Connection Failed';
+                imuIndicator.className = 'indicator-status disconnected';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Connection error');
+            btnConnect.disabled = false;
+        });
+    });
+    
+    // Disconnect from IMU device
+    btnDisconnect.addEventListener('click', function() {
+        if (recording) {
+            // Stop recording first
+            stopRecording();
+        }
+        
+        updateStatus('Disconnecting...');
+        btnDisconnect.disabled = true;
+        
+        fetch('/imu/api/disconnect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            connected = false;
+            updateStatus(data.message);
+            
+            btnConnect.disabled = false;
+            btnDisconnect.disabled = true;
+            btnStartRecording.disabled = true;
+            btnStopRecording.disabled = true;
+            btnMarkRep.disabled = true;
+            
+            imuIndicator.textContent = 'Disconnected';
+            imuIndicator.className = 'indicator-status disconnected';
+            
+            // Hide device address
+            deviceAddressContainer.style.display = 'none';
+            
+            // Stop polling for data
+            stopDataPolling();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Disconnection error');
+            btnDisconnect.disabled = false;
+        });
+    });
+    
+    // Start recording
+    btnStartRecording.addEventListener('click', function() {
+        if (!connected) {
+            updateStatus('Connect to IMU device first');
+            return;
+        }
+        
+        let filename = fileNameInput.value;
+        if (!filename) {
+            const timestamp = new Date().toISOString().replace(/:/g, '-').replace('T', '_').slice(0, 19);
+            filename = `imu_session_${timestamp}`;
+            fileNameInput.value = filename;
+        }
+        
+        btnStartRecording.disabled = true;
+        
+        fetch('/imu/api/record/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                filename: filename
+            }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                recording = true;
+                recordingStatus.style.display = 'flex';
+                recordingFilename.textContent = data.filename;
+                recordingStartTime = Date.now();
+                
+                // Start timer update
+                startTimerUpdate();
+                
+                btnStopRecording.disabled = false;
+                btnMarkRep.disabled = false;
+                repCount.textContent = '0';
+                
+                // Start status polling
+                startStatusPolling();
+                
+                updateStatus(data.message);
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnStartRecording.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Recording error');
+            btnStartRecording.disabled = false;
+        });
+    });
+    
+    // Stop recording
+    btnStopRecording.addEventListener('click', stopRecording);
+    
+    function stopRecording() {
+        if (!recording) {
+            return;
+        }
+        
+        btnStopRecording.disabled = true;
+        
+        fetch('/imu/api/record/stop', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                recording = false;
+                recordingStatus.style.display = 'none';
+                
+                btnStartRecording.disabled = false;
+                btnMarkRep.disabled = true;
+                
+                // Stop status polling
+                stopStatusPolling();
+                
+                updateStatus(`Recording stopped. ${data.repetitions} repetitions recorded.`);
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnStopRecording.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Error stopping recording');
+            btnStopRecording.disabled = false;
+        });
+    }
+    
+    // Mark repetition
+    btnMarkRep.addEventListener('click', function() {
+        if (!recording) {
+            updateStatus('Start recording first');
+            return;
+        }
+        
+        // Temporarily disable to prevent double clicks
+        btnMarkRep.disabled = true;
+        
+        fetch('/imu/api/repetition', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                repCount.textContent = data.repetition;
+                
+                // Add visual feedback
+                btnMarkRep.classList.add('rep-highlight');
+                setTimeout(() => {
+                    btnMarkRep.classList.remove('rep-highlight');
+                    btnMarkRep.disabled = false;
+                }, 300);
+                
+                updateStatus(data.message);
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnMarkRep.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Error marking repetition');
+            btnMarkRep.disabled = false;
+        });
+    });
+    
+    // Helper function to update status
+    function updateStatus(message) {
+        connectionStatus.textContent = `Status: ${message}`;
+        console.log(message);
+    }
+    
+    // Format float values for display
+    function formatValue(value) {
+        return parseFloat(value).toFixed(3);
+    }
+    
+    // Start polling for IMU data
+    function startDataPolling() {
+        if (dataPollingInterval) {
+            clearInterval(dataPollingInterval);
+        }
+        
+        dataPollingInterval = setInterval(function() {
+            if (!connected) return;
+            
+            fetch('/imu/api/data')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // Update displayed values
+                        accelX.textContent = formatValue(data.data.accel_x);
+                        accelY.textContent = formatValue(data.data.accel_y);
+                        accelZ.textContent = formatValue(data.data.accel_z);
+                        gyroX.textContent = formatValue(data.data.gyro_x);
+                        gyroY.textContent = formatValue(data.data.gyro_y);
+                        gyroZ.textContent = formatValue(data.data.gyro_z);
+                        
+                        // Update charts
+                        updateCharts(data.data);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching data:', error);
+                });
+        }, 100); // Poll every 100ms
+    }
+    
+    // Stop data polling
+    function stopDataPolling() {
+        if (dataPollingInterval) {
+            clearInterval(dataPollingInterval);
+            dataPollingInterval = null;
+        }
+    }
+    
+    // Start status polling for updates
+    function startStatusPolling() {
+        if (statusPollingInterval) {
+            clearInterval(statusPollingInterval);
+        }
+        
+        statusPollingInterval = setInterval(function() {
+            fetch('/imu/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.connected) {
+                        imuIndicator.textContent = 'Connected';
+                        imuIndicator.className = 'indicator-status connected';
+                        
+                        if (data.device_address) {
+                            deviceAddressContainer.style.display = 'flex';
+                            deviceAddress.textContent = data.device_address;
+                        }
+                    } else {
+                        imuIndicator.textContent = 'Disconnected';
+                        imuIndicator.className = 'indicator-status disconnected';
+                        deviceAddressContainer.style.display = 'none';
+                    }
+                    
+                    if (data.recording) {
+                        recordingStatus.style.display = 'flex';
+                        repCount.textContent = data.repetitions;
+                    } else {
+                        recordingStatus.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                });
+        }, 1000); // Poll every second
+    }
+    
+    // Stop status polling
+    function stopStatusPolling() {
+        if (statusPollingInterval) {
+            clearInterval(statusPollingInterval);
+            statusPollingInterval = null;
+        }
+    }
+    
+    // Update recording timer
+    function startTimerUpdate() {
+        const timerInterval = setInterval(function() {
+            if (!recording) {
+                clearInterval(timerInterval);
+                return;
+            }
+            
+            const elapsedMs = Date.now() - recordingStartTime;
+            const hours = Math.floor(elapsedMs / 3600000).toString().padStart(2, '0');
+            const minutes = Math.floor((elapsedMs % 3600000) / 60000).toString().padStart(2, '0');
+            const seconds = Math.floor((elapsedMs % 60000) / 1000).toString().padStart(2, '0');
+            
+            recordingTime.textContent = `${hours}:${minutes}:${seconds}`;
+        }, 1000);
+    }
+    
+    // Update charts with new data
+    function updateCharts(data) {
+        // Add data to accelerometer chart
+        const accelUpdate = {
+            y: [[data.accel_x], [data.accel_y], [data.accel_z]]
+        };
+        
+        // Add data to gyroscope chart
+        const gyroUpdate = {
+            y: [[data.gyro_x], [data.gyro_y], [data.gyro_z]]
+        };
+        
+        Plotly.extendTraces('accel-chart', accelUpdate, [0, 1, 2]);
+        Plotly.extendTraces('gyro-chart', gyroUpdate, [0, 1, 2]);
+        
+        // Update sample counter
+        sampleCount++;
+        
+        // Shift x-axis if we have more than maxPoints
+        if (sampleCount > maxPoints) {
+            Plotly.relayout('accel-chart', {
+                'xaxis.range': [sampleCount - maxPoints, sampleCount]
+            });
+            Plotly.relayout('gyro-chart', {
+                'xaxis.range': [sampleCount - maxPoints, sampleCount]
+            });
+        }
+    }
+    
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', function(event) {
+        // Press spacebar to mark repetition when recording
+        if (event.code === 'Space' && !event.repeat) {
+            if (btnMarkRep && !btnMarkRep.disabled) {
+                btnMarkRep.click();
+                event.preventDefault(); // Prevent page scrolling
+            }
+        }
+        
+        // Press 'S' to start/stop recording
+        if (event.code === 'KeyS' && (event.ctrlKey || event.metaKey)) {
+            if (btnStartRecording && !btnStartRecording.disabled) {
+                btnStartRecording.click();
+                event.preventDefault();
+            } else if (btnStopRecording && !btnStopRecording.disabled) {
+                btnStopRecording.click();
+                event.preventDefault();
+            }
+        }
+    });
+});
+</script>
+
+<style>
+/* IMU page specific styles */
+.data-row-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.live-data-values {
+    flex: 1;
+    min-width: 250px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.data-card {
+    background-color: white;
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    border: 1px solid #eaeaea;
+}
+
+.data-card h3 {
+    margin-top: 0;
+    color: #3498db;
+    border-bottom: 1px solid #eaeaea;
+    padding-bottom: 0.8rem;
+}
+
+.chart-container {
+    flex: 3;
+    min-width: 600px;
+    border: 1px solid #eaeaea;
+    border-radius: 6px;
+    background-color: white;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.chart-tabs {
+    display: flex;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #eaeaea;
+}
+
+.chart-tab {
+    background: none;
+    border: none;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    position: relative;
+    margin-right: 5px;
+    color: #777;
+}
+
+.chart-tab.active {
+    color: #3498db;
+    font-weight: 600;
+}
+
+.chart-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background-color: #3498db;
+}
+
+.chart-tab:hover {
+    color: #3498db;
+}
+
+.data-value {
+    font-weight: bold;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 1rem;
+}
+
+.recording-panel {
+    position: relative;
+}
+
+.recording-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.rep-counter {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.counter-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #f8f9fa;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    border: 1px solid #eaeaea;
+}
+
+#rep-count {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #3498db;
+}
+
+.counter-label {
+    font-size: 0.9rem;
+    color: #777;
+}
+
+.btn-large {
+    font-size: 1.2rem;
+    padding: 0.8rem 1.5rem;
+}
+
+.recording-status {
+    display: none;
+    justify-content: space-between;
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #eaeaea;
+    align-items: center;
+}
+
+.recording-indicator {
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+.recording-indicator .dot {
+    width: 10px;
+    height: 10px;
+    background-color: #e74c3c;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.recording-timer, .recording-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #555;
+}
+
+.helper-text {
+    color: #777;
+    font-size: 0.9rem;
+    margin-top: 5px;
+    display: block;
+}
+
+.connection-indicators {
+    display: flex;
+    gap: 20px;
+    margin-top: 10px;
+}
+
+.indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.indicator-label {
+    font-weight: 500;
+}
+
+.indicator-status {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.indicator-status.connected {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.indicator-status.disconnected {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Animation for rep button */
+.rep-highlight {
+    animation: button-flash 0.3s;
+}
+
+@keyframes button-flash {
+    0% { background-color: #3498db; }
+    50% { background-color: #2ecc71; }
+    100% { background-color: #3498db; }
+}
+</style>
+{% endblock %} 

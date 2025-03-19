@@ -1,0 +1,682 @@
+{% extends "base.html" %}
+
+{% block title %}EMG{% endblock %}
+
+{% block content %}
+<h1>EMG Data Collection</h1>
+
+<div class="dashboard-panel">
+    <h2>Device Connection</h2>
+    <div class="form-group">
+        <label for="port">Serial Port:</label>
+        <input type="text" id="port" class="form-control" placeholder="COM3 or /dev/cu.usbmodem213301">
+    </div>
+    <div class="form-group">
+        <label for="baudrate">Baud Rate:</label>
+        <input type="number" id="baudrate" class="form-control" value="115200">
+    </div>
+    <div class="button-group">
+        <button id="btn-connect" class="btn">Connect</button>
+        <button id="btn-disconnect" class="btn" disabled>Disconnect</button>
+    </div>
+    <div class="status-panel">
+        <p id="connection-status">Status: Disconnected</p>
+        <div class="connection-indicators">
+            <div class="indicator">
+                <span class="indicator-label">EMG:</span>
+                <span id="emg-indicator" class="indicator-status disconnected">Disconnected</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-panel recording-panel">
+    <h2>Data Recording</h2>
+    <div class="form-group">
+        <label for="file-name">Recording File Name:</label>
+        <input type="text" id="file-name" class="form-control" placeholder="session_name">
+        <span class="helper-text">The file will be saved as [filename]_emg.csv</span>
+    </div>
+    <div class="recording-controls">
+        <div class="button-group">
+            <button id="btn-start-recording" class="btn" disabled>Start Recording</button>
+            <button id="btn-stop-recording" class="btn" disabled>Stop Recording</button>
+        </div>
+        <div class="rep-counter">
+            <button id="btn-mark-rep" class="btn btn-large" disabled>
+                <i class="fas fa-plus"></i> Count Repetition
+            </button>
+            <div class="counter-display">
+                <span id="rep-count">0</span>
+                <span class="counter-label">reps</span>
+            </div>
+        </div>
+    </div>
+    <div class="recording-status" id="recording-status" style="display: none;">
+        <div class="recording-indicator">
+            <span class="dot"></span> Recording
+        </div>
+        <div class="recording-timer">
+            <i class="fas fa-clock"></i> <span id="recording-time">00:00:00</span>
+        </div>
+        <div class="recording-file">
+            <i class="fas fa-file"></i> <span id="recording-filename">No file</span>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-panel">
+    <h2>Live Data</h2>
+    <div class="data-row-container">
+        <div class="live-data-values">
+            <div class="data-card">
+                <h3>EMG Readings</h3>
+                <div id="emg-data">
+                    <div class="data-row">
+                        <span class="data-label">Time:</span>
+                        <span id="emg-time" class="data-value">0</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Bicep:</span>
+                        <span id="emg-bicep" class="data-value">0</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Shoulder:</span>
+                        <span id="emg-shoulder" class="data-value">0</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">Tricep:</span>
+                        <span id="emg-tricep" class="data-value">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <div id="emg-chart" style="width:100%; height:300px;"></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // DOM Elements
+    const portInput = document.getElementById('port');
+    const baudrateInput = document.getElementById('baudrate');
+    const btnConnect = document.getElementById('btn-connect');
+    const btnDisconnect = document.getElementById('btn-disconnect');
+    const connectionStatus = document.getElementById('connection-status');
+    const emgIndicator = document.getElementById('emg-indicator');
+    
+    const fileNameInput = document.getElementById('file-name');
+    const btnStartRecording = document.getElementById('btn-start-recording');
+    const btnStopRecording = document.getElementById('btn-stop-recording');
+    const btnMarkRep = document.getElementById('btn-mark-rep');
+    const repCount = document.getElementById('rep-count');
+    const recordingStatus = document.getElementById('recording-status');
+    const recordingTime = document.getElementById('recording-time');
+    const recordingFilename = document.getElementById('recording-filename');
+    
+    const emgTime = document.getElementById('emg-time');
+    const emgBicep = document.getElementById('emg-bicep');
+    const emgShoulder = document.getElementById('emg-shoulder');
+    const emgTricep = document.getElementById('emg-tricep');
+    
+    // State variables
+    let connected = false;
+    let recording = false;
+    let dataPollingInterval = null;
+    let statusPollingInterval = null;
+    let recordingStartTime = 0;
+    
+    // EMG Chart setup
+    const emgChartData = [
+        {
+            name: 'Bicep',
+            y: [],
+            mode: 'lines',
+            line: { color: '#FF6384' }
+        },
+        {
+            name: 'Shoulder',
+            y: [],
+            mode: 'lines',
+            line: { color: '#36A2EB' }
+        },
+        {
+            name: 'Tricep',
+            y: [],
+            mode: 'lines',
+            line: { color: '#4BC0C0' }
+        }
+    ];
+    
+    const emgChartLayout = {
+        title: 'EMG Live Data',
+        xaxis: { 
+            title: 'Samples',
+            showgrid: true,
+            zeroline: false,
+            range: [0, 100]
+        },
+        yaxis: { 
+            title: 'Amplitude',
+            showgrid: true,
+            zeroline: true
+        },
+        margin: { t: 40, l: 60, r: 40, b: 50 },
+        legend: {
+            orientation: 'h',
+            y: 1.1
+        },
+        autosize: true
+    };
+    
+    Plotly.newPlot('emg-chart', emgChartData, emgChartLayout, { responsive: true });
+    let sampleCount = 0;
+    const maxPoints = 100;
+    
+    // Connect to EMG device
+    btnConnect.addEventListener('click', function() {
+        const port = portInput.value;
+        const baudrate = baudrateInput.value;
+        
+        if (!port) {
+            updateStatus('Please enter a port name');
+            return;
+        }
+        
+        updateStatus('Connecting...');
+        btnConnect.disabled = true;
+        
+        fetch('/emg/api/connect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                port: port,
+                baudrate: parseInt(baudrate)
+            }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                connected = true;
+                updateStatus(data.message);
+                
+                btnConnect.disabled = true;
+                btnDisconnect.disabled = false;
+                btnStartRecording.disabled = false;
+                
+                emgIndicator.textContent = 'Connected';
+                emgIndicator.className = 'indicator-status connected';
+                
+                // Start polling for data
+                startDataPolling();
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnConnect.disabled = false;
+                
+                emgIndicator.textContent = 'Connection Failed';
+                emgIndicator.className = 'indicator-status disconnected';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Connection error');
+            btnConnect.disabled = false;
+        });
+    });
+    
+    // Disconnect from EMG device
+    btnDisconnect.addEventListener('click', function() {
+        if (recording) {
+            // Stop recording first
+            stopRecording();
+        }
+        
+        updateStatus('Disconnecting...');
+        btnDisconnect.disabled = true;
+        
+        fetch('/emg/api/disconnect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            connected = false;
+            updateStatus(data.message);
+            
+            btnConnect.disabled = false;
+            btnDisconnect.disabled = true;
+            btnStartRecording.disabled = true;
+            btnStopRecording.disabled = true;
+            btnMarkRep.disabled = true;
+            
+            emgIndicator.textContent = 'Disconnected';
+            emgIndicator.className = 'indicator-status disconnected';
+            
+            // Stop polling for data
+            stopDataPolling();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Disconnection error');
+            btnDisconnect.disabled = false;
+        });
+    });
+    
+    // Start recording
+    btnStartRecording.addEventListener('click', function() {
+        if (!connected) {
+            updateStatus('Connect to EMG device first');
+            return;
+        }
+        
+        let filename = fileNameInput.value;
+        if (!filename) {
+            const timestamp = new Date().toISOString().replace(/:/g, '-').replace('T', '_').slice(0, 19);
+            filename = `emg_session_${timestamp}`;
+            fileNameInput.value = filename;
+        }
+        
+        btnStartRecording.disabled = true;
+        
+        fetch('/emg/api/record/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                filename: filename
+            }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                recording = true;
+                recordingStatus.style.display = 'flex';
+                recordingFilename.textContent = data.filename;
+                recordingStartTime = Date.now();
+                
+                // Start timer update
+                startTimerUpdate();
+                
+                btnStopRecording.disabled = false;
+                btnMarkRep.disabled = false;
+                repCount.textContent = '0';
+                
+                // Start status polling
+                startStatusPolling();
+                
+                updateStatus(data.message);
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnStartRecording.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Recording error');
+            btnStartRecording.disabled = false;
+        });
+    });
+    
+    // Stop recording
+    btnStopRecording.addEventListener('click', stopRecording);
+    
+    function stopRecording() {
+        if (!recording) {
+            return;
+        }
+        
+        btnStopRecording.disabled = true;
+        
+        fetch('/emg/api/record/stop', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                recording = false;
+                recordingStatus.style.display = 'none';
+                
+                btnStartRecording.disabled = false;
+                btnMarkRep.disabled = true;
+                
+                // Stop status polling
+                stopStatusPolling();
+                
+                updateStatus(`Recording stopped. ${data.repetitions} repetitions recorded.`);
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnStopRecording.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Error stopping recording');
+            btnStopRecording.disabled = false;
+        });
+    }
+    
+    // Mark repetition
+    btnMarkRep.addEventListener('click', function() {
+        if (!recording) {
+            updateStatus('Start recording first');
+            return;
+        }
+        
+        // Temporarily disable to prevent double clicks
+        btnMarkRep.disabled = true;
+        
+        fetch('/emg/api/repetition', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                repCount.textContent = data.repetition;
+                
+                // Add visual feedback
+                btnMarkRep.classList.add('rep-highlight');
+                setTimeout(() => {
+                    btnMarkRep.classList.remove('rep-highlight');
+                    btnMarkRep.disabled = false;
+                }, 300);
+                
+                updateStatus(data.message);
+            } else {
+                updateStatus('Error: ' + data.message);
+                btnMarkRep.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus('Error marking repetition');
+            btnMarkRep.disabled = false;
+        });
+    });
+    
+    // Helper function to update status
+    function updateStatus(message) {
+        connectionStatus.textContent = `Status: ${message}`;
+        console.log(message);
+    }
+    
+    // Start polling for EMG data
+    function startDataPolling() {
+        if (dataPollingInterval) {
+            clearInterval(dataPollingInterval);
+        }
+        
+        dataPollingInterval = setInterval(function() {
+            if (!connected) return;
+            
+            fetch('/emg/api/data')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // Update displayed values
+                        emgTime.textContent = data.data.time;
+                        emgBicep.textContent = data.data.bicep;
+                        emgShoulder.textContent = data.data.shoulder;
+                        emgTricep.textContent = data.data.tricep;
+                        
+                        // Update chart
+                        updateChart(data.data);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching data:', error);
+                });
+        }, 50); // Poll every 50ms for smooth updates
+    }
+    
+    // Stop data polling
+    function stopDataPolling() {
+        if (dataPollingInterval) {
+            clearInterval(dataPollingInterval);
+            dataPollingInterval = null;
+        }
+    }
+    
+    // Start status polling for updates
+    function startStatusPolling() {
+        if (statusPollingInterval) {
+            clearInterval(statusPollingInterval);
+        }
+        
+        statusPollingInterval = setInterval(function() {
+            fetch('/emg/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.connected) {
+                        emgIndicator.textContent = 'Connected';
+                        emgIndicator.className = 'indicator-status connected';
+                    } else {
+                        emgIndicator.textContent = 'Disconnected';
+                        emgIndicator.className = 'indicator-status disconnected';
+                    }
+                    
+                    if (data.recording) {
+                        recordingStatus.style.display = 'flex';
+                        repCount.textContent = data.repetitions;
+                    } else {
+                        recordingStatus.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                });
+        }, 1000); // Poll every second
+    }
+    
+    // Stop status polling
+    function stopStatusPolling() {
+        if (statusPollingInterval) {
+            clearInterval(statusPollingInterval);
+            statusPollingInterval = null;
+        }
+    }
+    
+    // Update recording timer
+    function startTimerUpdate() {
+        const timerInterval = setInterval(function() {
+            if (!recording) {
+                clearInterval(timerInterval);
+                return;
+            }
+            
+            const elapsedMs = Date.now() - recordingStartTime;
+            const hours = Math.floor(elapsedMs / 3600000).toString().padStart(2, '0');
+            const minutes = Math.floor((elapsedMs % 3600000) / 60000).toString().padStart(2, '0');
+            const seconds = Math.floor((elapsedMs % 60000) / 1000).toString().padStart(2, '0');
+            
+            recordingTime.textContent = `${hours}:${minutes}:${seconds}`;
+        }, 1000);
+    }
+    
+    // Update chart with new data
+    function updateChart(data) {
+        // Add data to chart
+        const update = {
+            y: [[data.bicep], [data.shoulder], [data.tricep]]
+        };
+        
+        Plotly.extendTraces('emg-chart', update, [0, 1, 2]);
+        
+        // Update sample counter
+        sampleCount++;
+        
+        // Shift x-axis if we have more than maxPoints
+        if (sampleCount > maxPoints) {
+            Plotly.relayout('emg-chart', {
+                'xaxis.range': [sampleCount - maxPoints, sampleCount]
+            });
+        }
+    }
+});
+</script>
+
+<style>
+/* EMG page specific styles */
+.data-row-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.live-data-values {
+    flex: 1;
+    min-width: 250px;
+}
+
+.data-card {
+    background-color: white;
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    border: 1px solid #eaeaea;
+}
+
+.data-card h3 {
+    margin-top: 0;
+    color: #3498db;
+    border-bottom: 1px solid #eaeaea;
+    padding-bottom: 0.8rem;
+}
+
+.chart-container {
+    flex: 3;
+    min-width: 600px;
+    border: 1px solid #eaeaea;
+    border-radius: 6px;
+    background-color: white;
+    padding: 1rem;
+}
+
+.data-value {
+    font-weight: bold;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 1rem;
+}
+
+.recording-panel {
+    position: relative;
+}
+
+.recording-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.rep-counter {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.counter-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #f8f9fa;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    border: 1px solid #eaeaea;
+}
+
+#rep-count {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #3498db;
+}
+
+.counter-label {
+    font-size: 0.9rem;
+    color: #777;
+}
+
+.btn-large {
+    font-size: 1.2rem;
+    padding: 0.8rem 1.5rem;
+}
+
+.recording-status {
+    display: none;
+    justify-content: space-between;
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #eaeaea;
+    align-items: center;
+}
+
+.recording-indicator {
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+.recording-indicator .dot {
+    width: 10px;
+    height: 10px;
+    background-color: #e74c3c;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.recording-timer, .recording-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #555;
+}
+
+.helper-text {
+    color: #777;
+    font-size: 0.9rem;
+    margin-top: 5px;
+    display: block;
+}
+
+/* Animation for rep button */
+.rep-highlight {
+    animation: button-flash 0.3s;
+}
+
+@keyframes button-flash {
+    0% { background-color: #3498db; }
+    50% { background-color: #2ecc71; }
+    100% { background-color: #3498db; }
+}
+</style>
+{% endblock %} 

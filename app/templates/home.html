@@ -1,0 +1,613 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<h1>Welcome to the dashboard</h1>
+
+
+<div class="dashboard-panel">
+    <h2>Setup Connection</h2>
+    <div id="setup-form-container">
+        <div class="form-group">
+            <label for="session-name">Session Name:</label>
+            <input type="text" id="session-name" class="form-control" placeholder="Enter session name">
+        </div>
+        <div class="form-group">
+            <label for="emg-port">EMG Serial Port:</label>
+            <input type="text" id="emg-port" class="form-control" value="/dev/cu.usbmodem213301">
+        </div>
+        <div class="form-group">
+            <label for="emg-baudrate">EMG Baud Rate:</label>
+            <input type="number" id="emg-baudrate" class="form-control" value="115200">
+        </div>
+    </div>
+    <div id="active-session-info" style="display: none;">
+        <div class="session-info">
+            <span class="info-label">Session Name:</span>
+            <span id="active-session-name" class="info-value"></span>
+        </div>
+        <div class="session-info">
+            <span class="info-label">EMG Port:</span>
+            <span id="active-emg-port" class="info-value"></span>
+        </div>
+    </div>
+    <button id="btn-start-session" class="btn">Start Session</button>
+    <button id="btn-stop-session" class="btn" disabled>Stop Session</button>
+    <div class="status-panel">
+        <p id="session-status">Status: Ready</p>
+        <div class="connection-indicators">
+            <div class="indicator">
+                <span class="indicator-label">IMU:</span>
+                <span id="imu-status" class="indicator-status disconnected">Disconnected</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">EMG:</span>
+                <span id="emg-status" class="indicator-status disconnected">Disconnected</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- New Rep Detection Mode Toggle Section -->
+<div class="dashboard-panel rep-control-panel">
+    <h2>Rep Detection Mode</h2>
+    <div class="toggle-container">
+        <label class="switch">
+            <input type="checkbox" id="rep-mode-toggle" checked>
+            <span class="slider round"></span>
+        </label>
+        <span id="rep-mode-label">Automatic</span>
+    </div>
+    <div id="manual-rep-controls" style="display: none;">
+        <button id="btn-count-rep" class="btn btn-primary" disabled>Count Rep</button>
+        <p>Press this button each time you complete a repetition</p>
+    </div>
+</div>
+
+<div class="data-display">
+    <div class="data-card">
+        <h2>IMU Data</h2>
+        <div class="data-display-flex">
+            <div id="imu-data">
+                <div class="data-row">
+                    <span class="data-label">Accel X:</span>
+                    <span id="accel-x">0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Accel Y:</span>
+                    <span id="accel-y">0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Accel Z:</span>
+                    <span id="accel-z">0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Gyro X:</span>
+                    <span id="gyro-x">0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Gyro Y:</span>
+                    <span id="gyro-y">0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Gyro Z:</span>
+                    <span id="gyro-z">0.00</span>
+                </div>
+            </div>
+            <div id="imu-plot-container" class="plot-container">
+                <div id="imu-accel-plot" class="mini-plot"></div>
+                <div id="imu-gyro-plot" class="mini-plot"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="data-card">
+        <h2>EMG Data</h2>
+        <div class="data-display-flex">
+            <div id="emg-data">
+                <div class="data-row">
+                    <span class="data-label">Time:</span>
+                    <span id="emg-time">0</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Bicep:</span>
+                    <span id="emg-bicep">0</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Shoulder:</span>
+                    <span id="emg-shoulder">0</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Tricep:</span>
+                    <span id="emg-tricep">0</span>
+                </div>
+            </div>
+            <div id="emg-plot-container" class="plot-container">
+                <div id="emg-live-plot" class="mini-plot"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- New ML Results Card -->
+    <div class="data-card">
+        <h2>ML Results</h2>
+        <div id="ml-results">
+            <div class="data-row">
+                <span class="data-label">Exercise:</span>
+                <span id="ml-exercise">unknown</span>
+            </div>
+            <div class="data-row">
+                <span class="data-label">Rep Count:</span>
+                <span id="ml-rep-count">0</span>
+            </div>
+            <div class="data-row">
+                <span class="data-label">Bicep Fatigue:</span>
+                <span id="ml-bicep-fatigue">unknown</span>
+            </div>
+            <div class="data-row">
+                <span class="data-label">Shoulder Fatigue:</span>
+                <span id="ml-shoulder-fatigue">unknown</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script>
+    // EMG Chart setup
+    var emgData = [
+        {
+            name: 'Bicep',
+            y: [],
+            mode: 'lines',
+            line: { color: '#FF0000' }
+        },
+        {
+            name: 'Shoulder',
+            y: [],
+            mode: 'lines',
+            line: { color: '#00FF00' }
+        },
+        {
+            name: 'Tricep',
+            y: [],
+            mode: 'lines',
+            line: { color: '#0000FF' }
+        }
+    ];
+    var emgLayout = {
+        title: 'EMG Live Data',
+        xaxis: { title: 'Time' },
+        yaxis: { title: 'Amplitude' }
+    };
+    var emgConfig = { responsive: true };
+    Plotly.newPlot('emgChart', emgData, emgLayout, emgConfig);
+    
+    // IMU Chart setup
+    var imuData = [
+        {
+            name: 'Accelerometer X',
+            y: [],
+            mode: 'lines',
+            line: { color: '#FF0000' }
+        },
+        {
+            name: 'Accelerometer Y',
+            y: [],
+            mode: 'lines',
+            line: { color: '#00FF00' }
+        },
+        {
+            name: 'Accelerometer Z',
+            y: [],
+            mode: 'lines',
+            line: { color: '#0000FF' }
+        },
+        {
+            name: 'Gyroscope X',
+            y: [],
+            mode: 'lines',
+            line: { color: '#FF00FF' }
+        },
+        {
+            name: 'Gyroscope Y',
+            y: [],
+            mode: 'lines',
+            line: { color: '#FFFF00' }
+        },
+        {
+            name: 'Gyroscope Z',
+            y: [],
+            mode: 'lines',
+            line: { color: '#00FFFF' }
+        }
+    ];
+    var imuLayout = {
+        title: 'IMU Live Data',
+        xaxis: { title: 'Time' },
+        yaxis: { title: 'Value' }
+    };
+    var imuConfig = { responsive: true };
+    Plotly.newPlot('imuChart', imuData, imuLayout, imuConfig);
+    
+    // Update function for live data
+    function updateLiveData() {
+        if (1=1) {
+            fetch('/api/live_data')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error(data.error);
+                        return;
+                    }
+                    
+                    // Update EMG chart
+                    var emgUpdate = {
+                        y: [[data.emg.bicep], [data.emg.shoulder], [data.emg.tricep]]
+                    };
+                    Plotly.extendTraces('emgChart', emgUpdate, [0, 1, 2]);
+                    
+                    // Update IMU chart if data is available
+                    if (data.imu) {
+                        var imuUpdate = {
+                            y: [
+                                [data.imu.accel_x],
+                                [data.imu.accel_y],
+                                [data.imu.accel_z],
+                                [data.imu.gyro_x],
+                                [data.imu.gyro_y],
+                                [data.imu.gyro_z]
+                            ]
+                        };
+                        Plotly.extendTraces('imuChart', imuUpdate, [0, 1, 2, 3, 4, 5]);
+                        
+                        // Limit the number of points displayed for IMU data
+                        var maxPoints = 50;
+                        if (imuData[0].y.length > maxPoints) {
+                            Plotly.relayout('imuChart', {
+                                xaxis: {
+                                    range: [imuData[0].y.length - maxPoints, imuData[0].y.length]
+                                }
+                            });
+                        }
+                    }
+                    
+                    // Limit the number of points displayed for EMG data
+                    var maxPoints = 50;
+                    if (emgData[0] && emgData[0].y && emgData[0].y.length > maxPoints) {
+                        Plotly.relayout('emgChart', {
+                            xaxis: {
+                                range: [emgData[0].y.length - maxPoints, emgData[0].y.length]
+                            }
+                        });
+                    }
+                    
+                    // Update ML Results from ML results stored in the session data
+                    if (data.ml_results) {
+                        document.getElementById('ml-exercise').innerText = data.ml_results.exercise;
+                        document.getElementById('ml-rep-count').innerText = data.ml_results.rep_count;
+                        
+                        // Update bicep fatigue with color coding
+                        const bicepFatigue = document.getElementById('ml-bicep-fatigue');
+                        bicepFatigue.innerText = data.ml_results.bicep_fatigue || 'unknown';
+                        
+                        // Remove existing classes
+                        bicepFatigue.classList.remove('fatigue-low', 'fatigue-medium', 'fatigue-high');
+                        
+                        // Add appropriate class
+                        if (data.ml_results.bicep_fatigue === 'low') {
+                            bicepFatigue.classList.add('fatigue-low');
+                        } else if (data.ml_results.bicep_fatigue === 'medium') {
+                            bicepFatigue.classList.add('fatigue-medium');
+                        } else if (data.ml_results.bicep_fatigue === 'high') {
+                            bicepFatigue.classList.add('fatigue-high');
+                        }
+                        
+                        // Update shoulder fatigue with color coding
+                        const shoulderFatigue = document.getElementById('ml-shoulder-fatigue');
+                        shoulderFatigue.innerText = data.ml_results.shoulder_fatigue || 'unknown';
+                        
+                        // Remove existing classes
+                        shoulderFatigue.classList.remove('fatigue-low', 'fatigue-medium', 'fatigue-high');
+                        
+                        // Add appropriate class
+                        if (data.ml_results.shoulder_fatigue === 'low') {
+                            shoulderFatigue.classList.add('fatigue-low');
+                        } else if (data.ml_results.shoulder_fatigue === 'medium') {
+                            shoulderFatigue.classList.add('fatigue-medium');
+                        } else if (data.ml_results.shoulder_fatigue === 'high') {
+                            shoulderFatigue.classList.add('fatigue-high');
+                        }
+                    }
+                })
+                .catch(error => console.error('Error fetching live data:', error));
+        }
+    }
+    
+    // Update every 100ms if connected
+    setInterval(updateLiveData, 100);
+</script>
+
+<style>
+    /* Toggle Switch Styles */
+    .rep-control-panel {
+        margin-top: 20px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    
+    .toggle-container {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    
+    .switch {
+        position: relative;
+        display: inline-block;
+        width: 60px;
+        height: 34px;
+        margin-right: 10px;
+    }
+    
+    .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    
+    .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+    }
+    
+    .slider:before {
+        position: absolute;
+        content: "";
+        height: 26px;
+        width: 26px;
+        left: 4px;
+        bottom: 4px;
+        background-color: white;
+        transition: .4s;
+    }
+    
+    input:checked + .slider {
+        background-color: #2196F3;
+    }
+    
+    input:focus + .slider {
+        box-shadow: 0 0 1px #2196F3;
+    }
+    
+    input:checked + .slider:before {
+        transform: translateX(26px);
+    }
+    
+    .slider.round {
+        border-radius: 34px;
+    }
+    
+    .slider.round:before {
+        border-radius: 50%;
+    }
+    
+    #btn-count-rep {
+        padding: 10px 20px;
+        font-size: 18px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        margin-bottom: 10px;
+    }
+    
+    #btn-count-rep:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+    }
+    
+    #btn-count-rep:hover:not(:disabled) {
+        background-color: #45a049;
+    }
+    
+    #rep-mode-label {
+        font-weight: bold;
+        font-size: 16px;
+    }
+    
+    /* Data display styles */
+    .data-display {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+    
+    .data-card {
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 15px;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .data-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.15);
+    }
+    
+    .data-card h2 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 18px;
+        color: #333;
+        border-bottom: 2px solid #f0f0f0;
+        padding-bottom: 8px;
+        display: flex;
+        align-items: center;
+    }
+    
+    .data-card h2::before {
+        content: '';
+        display: inline-block;
+        width: 6px;
+        height: 18px;
+        margin-right: 8px;
+        border-radius: 3px;
+    }
+    
+    .data-card:nth-child(1) h2::before {
+        background-color: rgba(0, 123, 255, 0.8);
+    }
+    
+    .data-card:nth-child(2) h2::before {
+        background-color: rgba(255, 87, 51, 0.8);
+    }
+    
+    .data-card:nth-child(3) h2::before {
+        background-color: rgba(46, 204, 113, 0.8);
+    }
+    
+    /* Plot container styles */
+    .data-display-flex {
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .plot-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 240px;
+    }
+    
+    .mini-plot {
+        width: 100%;
+        height: 120px;
+        background-color: rgba(255, 255, 255, 0.95);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+        transition: box-shadow 0.3s ease;
+    }
+    
+    .mini-plot:hover {
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    #imu-data, #emg-data {
+        flex: 0 0 150px;
+        background-color: rgba(248, 249, 250, 0.8);
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+    
+    .data-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    }
+    
+    .data-row:last-child {
+        border-bottom: none;
+    }
+    
+    .data-label {
+        font-weight: 500;
+        color: #555;
+    }
+    
+    #accel-x, #accel-y, #accel-z, #gyro-x, #gyro-y, #gyro-z,
+    #emg-bicep, #emg-shoulder, #emg-tricep {
+        font-family: 'Roboto Mono', monospace;
+        font-weight: bold;
+    }
+    
+    /* Color coding for values */
+    #accel-x, #gyro-x, #emg-bicep {
+        color: rgba(220, 53, 69, 0.9);
+    }
+    
+    #accel-y, #gyro-y, #emg-shoulder {
+        color: rgba(40, 167, 69, 0.9);
+    }
+    
+    #accel-z, #gyro-z, #emg-tricep {
+        color: rgba(0, 123, 255, 0.9);
+    }
+    
+    /* Active session info styles */
+    #active-session-info {
+        background-color: rgba(248, 249, 250, 0.8);
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        border: 1px solid rgba(0, 123, 255, 0.2);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    
+    .session-info {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    }
+    
+    .session-info:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 500;
+        color: #555;
+    }
+    
+    .info-value {
+        font-family: 'Roboto Mono', monospace;
+        font-weight: 500;
+        color: #0275d8;
+    }
+    
+    /* Sliding animation for form container */
+    #setup-form-container.hiding {
+        animation: slideUp 0.3s forwards;
+        overflow: hidden;
+    }
+    
+    #active-session-info.showing {
+        animation: slideDown 0.3s forwards;
+    }
+    
+    @keyframes slideUp {
+        0% { max-height: 300px; opacity: 1; }
+        100% { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0; }
+    }
+    
+    @keyframes slideDown {
+        0% { max-height: 0; opacity: 0; }
+        100% { max-height: 300px; opacity: 1; }
+    }
+</style>
+{% endblock %}
